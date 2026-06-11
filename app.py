@@ -73,15 +73,15 @@ def panggil_huggingface(prompt):
     if not key:
         raise ValueError("Token Hugging Face tidak dikonfigurasi")
         
-    # Endpoint Llama-3.1-8B-Instruct resmi gratis kilat dari Hugging Face
+    # ✨ PERBAIKAN: Alihkan ke model Qwen 2.5 yang server gratisannya jauh lebih sepi dan stabil
     url = "https://huggingface.co"
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
     
-    # ✨ PERBAIKAN MUTLAK: Bungkus prompt ke format chat template Llama-3.1 agar diterima server
-    prompt_terstruktur = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+    # Format Chat Template standar untuk Qwen / universal model
+    prompt_terstruktur = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
     
     payload = {
         "inputs": prompt_terstruktur,
@@ -96,12 +96,11 @@ def panggil_huggingface(prompt):
     response.raise_for_status()
     result = response.json()
     
-    # ✨ Ekstrak teks secara presisi berdasarkan format keluaran Hugging Face
     if isinstance(result, list) and len(result) > 0:
         teks_balasan = result[0].get("generated_text", "")
-        return teks_balasan, "🤗 Hugging Face (Llama-3.1)"
+        return teks_balasan, "🤗 Hugging Face (Qwen-2.5)"
     elif isinstance(result, dict) and "generated_text" in result:
-        return result["generated_text"], "🤗 Hugging Face (Llama-3.1)"
+        return result["generated_text"], "🤗 Hugging Face (Qwen-2.5)"
         
     raise ValueError("Format respon Hugging Face tidak dikenal")
 # =========================================================================
