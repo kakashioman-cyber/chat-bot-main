@@ -73,36 +73,33 @@ def panggil_huggingface(prompt):
     if not key:
         raise ValueError("Token Hugging Face tidak dikonfigurasi")
         
-    # ✨ PERBAIKAN: Alihkan ke model Qwen 2.5 yang server gratisannya jauh lebih sepi dan stabil
+    # ✨ PERBAIKAN MUTLAK: Menggunakan URL Endpoint v1 Chat resmi terbaru dari Hugging Face
     url = "https://huggingface.co"
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
     
-    # Format Chat Template standar untuk Qwen / universal model
-    prompt_terstruktur = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-    
+    # Format data disesuaikan dengan standar pesan (Messages object)
     payload = {
-        "inputs": prompt_terstruktur,
-        "parameters": {
-            "max_new_tokens": 512, 
-            "return_full_text": False,
-            "temperature": 0.7
-        }
+        "model": "Qwen/Qwen2.5-7B-Instruct", # Menggunakan model Qwen 2.5 yang sangat responsif
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 512,
+        "temperature": 0.7
     }
     
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
     result = response.json()
     
-    if isinstance(result, list) and len(result) > 0:
-        teks_balasan = result[0].get("generated_text", "")
+    # Ekstrak hasil teks dari struktur format standar v1 Chat
+    try:
+        teks_balasan = result["choices"][0]["message"]["content"]
         return teks_balasan, "🤗 Hugging Face (Qwen-2.5)"
-    elif isinstance(result, dict) and "generated_text" in result:
-        return result["generated_text"], "🤗 Hugging Face (Qwen-2.5)"
-        
-    raise ValueError("Format respon Hugging Face tidak dikenal")
+    except Exception:
+        raise ValueError(f"Gagal membaca JSON Hugging Face. Respon: {result}")
 # =========================================================================
 
 # =========================================================================
