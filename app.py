@@ -1,25 +1,25 @@
 import os
 import streamlit as st
 import hashlib
+import requests
 from dotenv import load_dotenv
 from langchain_community.vectorstores import UpstashVectorStore
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings # ✨ Menggunakan model lokal stabil
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 import google.generativeai as genai
 
 # 1. Konfigurasi Halaman Web Streamlit
-st.set_page_config(page_title="Chatbot Sejarah Nasional", page_icon="📜", layout="centered")
-st.title("📜 Chatbot Sejarah Nasional Indonesia")
-st.write("Tanyakan apa saja tentang sejarah Indonesia!")
+st.set_page_config(page_title="Chatbot Referensi Pintar", page_icon="📜", layout="centered")
+st.title("📜 Chatbot Referensi Pintar")
+st.write("Tanyakan apa saja berdasarkan buku referensi Anda!")
 
 # 2. Muat API Key dari .env atau Secrets
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
+api_key_gemini = os.getenv("GEMINI_API_KEY")
+api_key_grok = os.getenv("GROK_API_KEY")
+token_hf = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
-if not api_key:
-    st.error("❌ API Key Gemini tidak ditemukan!")
-    st.stop()
-
-genai.configure(api_key=api_key)
+if api_key_gemini:
+    genai.configure(api_key=api_key_gemini)
 
 # 3. Inisialisasi Model Embedding Lokal Gratis (all-MiniLM-L6-v2)
 @st.cache_resource
@@ -53,70 +53,99 @@ def init_services():
 db = init_services()
 
 # =========================================================================
-# MENU SIDEBAR: FITUR MULTI-FORMAT & PENOLAKAN INSTAN DUPLIKAT
+# ✨ FUNGSI PEMANGGIL AI CADANGAN (FALLBACK GENERATORS)
+# =========================================================================
+def panggil_gemini(prompt):
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    response = model.generate_content(prompt)
+    return response.text, "🧠 Gemini 2.5 Flash"
+
+def panggil_grok(prompt):
+    key = st.secrets.get("GROK_API_KEY") or os.getenv("GROK_API_KEY")
+    if not key:
+        raise ValueError("Key Grok tidak dikonfigurasi")
+        
+    url = "https://x.ai"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}"
+    }
+    payload = {
+        "model": "grok-2-1212", 
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False
+    }
+    response = requests.post(url, json=payload, headers=headers)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"], "🐦 Grok (X.AI)"
+
+def panggil_huggingface(prompt):
+    key = st.secrets.get("HUGGINGFACEHUB_API_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    if not key:
+        raise ValueError("Token Hugging Face tidak dikonfigurasi")
+        
+    url = "https://huggingface.co"
+    headers = {"Authorization": f"Bearer {key}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"max_new_tokens": 512, "return_full_text": False}
+    }
+    response = requests.post(url, json=payload, headers=headers)
+    response.raise_for_status()
+    result = response.json()
+    
+    if isinstance(result, list) and len(result) > 0:
+        return result[0]["generated_text"], "🤗 Hugging Face (Llama-3)"
+    elif isinstance(result, dict) and "generated_text" in result:
+        return result["generated_text"], "🤗 Hugging Face (Llama-3)"
+    raise ValueError("Format respon Hugging Face tidak dikenal")
+# =========================================================================
+
+# =========================================================================
+# 📂 MENU SIDEBAR: FITUR MULTI-FORMAT & PENOLAKAN INSTAN DUPLIKAT
 # =========================================================================
 with st.sidebar:
-    st.header("📂 Tambah Buku Sejarah")
-    uploaded_file = st.file_uploader("Unggah file Buku Sejarah Baru", type=["pdf", "txt"])
+    st.header("📂 Tambah Buku Referensi")
+    uploaded_file = st.file_uploader("Unggah file Buku Baru", type=["pdf", "txt"])
     
     if uploaded_file is not None:
         if st.button("🚀 Proses & Unggah ke Cloud"):
             import os
             nama_file = os.path.basename(uploaded_file.name)
-            
-            # ✨ Penanda status: buat False di awal
             file_sudah_ada = False 
             
-            with st.spinner("🔍 Memeriksa apakah file sudah ada di cloud..."):
+            with st.spinner("🔍 Memeriksa apakah file sudah ada..."):
                 try:
                     string_filter_sql = f"source = '{nama_file}'"
-                    dokumen_kembar = db.similarity_search(
-                        query="sejarah", 
-                        k=1, 
-                        filter=string_filter_sql
-                    )
-                    
+                    dokumen_kembar = db.similarity_search(query="sejarah", k=1, filter=string_filter_sql)
                     if dokumen_kembar and len(dokumen_kembar) > 0:
-                        st.warning(f"❌ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah sebelumnya.")
-                        # ✨ PERBAIKAN UTAMA: Ubah status menjadi True, JANGAN pakai st.stop()
+                        st.warning(f"❌ Berkas ditolak! Buku dengan nama '{nama_file}' sudah ada.")
                         file_sudah_ada = True  
-                        
-                except Exception as e:
-                    pass
+                except Exception: pass
 
-            # -----------------------------------------------------------------
-            # JIKA BELUM ADA (LOLOS SENSOR), BARU JALANKAN PROSES EKSTRAKSI
-            # -----------------------------------------------------------------
             if not file_sudah_ada:
                 with st.spinner("Python sedang membaca isi dokumen..."):
                     teks_seluruh_buku = ""
-                    
                     if nama_file.endswith('.pdf'):
                         from pypdf import PdfReader
                         reader = PdfReader(uploaded_file)
                         for halaman in reader.pages:
                             teks_halaman = halaman.extract_text()
-                            if teks_halaman:
-                                teks_seluruh_buku += teks_halaman + "\n"
-                                
+                            if teks_halaman: teks_seluruh_buku += teks_halaman + "\n"
                     elif nama_file.endswith('.txt'):
                         teks_seluruh_buku = uploaded_file.read().decode("utf-8")
 
-                    # Penapisan Kata Kunci Sampah
                     kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
                     lines = teks_seluruh_buku.split("\n")
                     lines_clean = []
-                    
                     for line in lines:
                         line_lowercased = line.lower().strip()
                         if len(line_lowercased) < 15: continue
                         if any(kata in line_lowercased for kata in kata_kunci_sampah): continue
                         if line_lowercased.isdigit(): continue
                         lines_clean.append(line)
-                        
                     teks_bersih_final = "\n".join(lines_clean)
 
-                    # PROSES CHUNKING MURNI PYTHON
                     chunk_size = 1000
                     chunk_overlap = 200
                     list_teks = []
@@ -126,25 +155,17 @@ with st.sidebar:
                         list_teks.append(teks_bersih_final[start:end])
                         start += (chunk_size - chunk_overlap)
 
-                    st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
+                    st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian.")
 
                     if list_teks:
-                        list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
-                        list_metadatas = [{"source": nama_file} for _ in list_teks]
-                        
-                        with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
+                        with st.spinner("Model lokal sedang mengirim ke Upstash..."):
                             try:
-                                db.add_texts(
-                                    texts=list_teks,
-                                    metadatas=list_metadatas,
-                                    ids=list_ids
-                               )
-                                st.success(f"✅ Berhasil! Buku '{nama_file}' kini aman tersimpan di Upstash Cloud!")
+                                list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
+                                list_metadatas = [{"source": nama_file} for _ in list_teks]
+                                db.add_texts(texts=list_teks, metadatas=list_metadatas, ids=list_ids)
+                                st.success(f"✅ Berhasil menyimpan buku '{nama_file}'!")
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Gagal mengunggah: {e}")
-                    else:
-                        st.warning("⚠️ File tidak berisi teks sejarah yang lolos sensor filter Python.")
+                            except Exception as e: st.error(f"❌ Gagal: {e}")
 
 # =========================================================================
 # 5. Kelola Riwayat Obrolan
@@ -155,57 +176,70 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 6. Input Chat dari Pengguna
-if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
+if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
         st.markdown(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("🔍 Sedang mencari di buku referensi..."):
+        with st.spinner("🔍 Sedang mencari di database referensi..."):
             try:
-                # ✨ PERBAIKAN: Hapus router Python, paksa SELALU mencari ke Upstash Cloud
                 docs = db.similarity_search(user_query, k=4)
                 context = "\n\n".join([doc.page_content for doc in docs])
-                
-                # Susun teks memori ingatan (Maksimal 6 pesan terakhir)
-                riwayat_teks = ""
-                for msg in st.session_state.messages[:-1][-6:]: 
-                    peran = "Pengguna" if msg["role"] == "user" else "Asisten/Anda"
-                    riwayat_teks += f"{peran}: {msg['content']}\n"
-                
-                if not riwayat_teks: 
-                    riwayat_teks = "(Belum ada obrolan sebelumnya)"
-                
-                # Prompt yang disesuaikan agar fleksibel membaca seluruh isi database Anda
-                prompt = f"""
-                Anda adalah seorang pakar dan asisten edukatif yang ramah.
-                Tugas Anda adalah menjawab pertanyaan pengguna BERDASARKAN KONTEKS DI BAWAH INI.
-                Gunakan RIWAYAT OBROLAN untuk memahami kelanjutan percakapan sebelumnya jika ada.
+            except Exception:
+                context = ""
 
-                Jika informasi tidak ada di dalam konteks, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban sendiri.
+        # Susun teks memori ingatan obrolan (Maksimal 6 pesan)
+        riwayat_teks = ""
+        for msg in st.session_state.messages[:-1][-6:]: 
+            peran = "Pengguna" if msg["role"] == "user" else "Asisten"
+            riwayat_teks += f"{peran}: {msg['content']}\n"
+        
+        if not riwayat_teks: 
+            riwayat_teks = "(Belum ada obrolan sebelumnya)"
+        
+        prompt = f"""
+        Anda adalah seorang pakar dan asisten edukatif yang ramah.
+        Tugas Anda adalah menjawab pertanyaan pengguna BERDASARKAN KONTEKS DI BAWAH INI.
+        Gunakan RIWAYAT OBROLAN untuk memahami kelanjutan percakapan sebelumnya jika ada.
 
-                RIWAYAT OBROLAN SEBELUMNYA:
-                {riwayat_teks}
+        Jika informasi tidak ada di dalam konteks, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban sendiri.
 
-                KONTEKS DARI BUKU REFERENSI:
-                {context}
+        RIWAYAT OBROLAN SEBELUMNYA:
+        {riwayat_teks}
 
-                PERTANYAAN TERBARU PENGGUNA:
-                {user_query}
+        KONTEKS DARI BUKU REFERENSI:
+        {context}
 
-                JAWABAN ANDA:
-                """
+        PERTANYAAN TERBARU PENGGUNA:
+        {user_query}
 
-                model = genai.GenerativeModel('gemini-2.5-flash')
-                response = model.generate_content(prompt)
-                bot_response = response.text
-                
-                st.markdown(bot_response)
-                st.session_state.messages.append({"role": "assistant", "content": bot_response})
-                
-            except Exception as e:
-                st.error(f"❌ Terjadi kesalahan: {e}")
+        JAWABAN ANDA:
+        """
 
+        bot_response = ""
+        model_digunakan = ""
+
+        # 🚀 PROSES CADANGAN BERTINGKAT (FALLBACK ENGINE CHAT)
+        with st.spinner("✍️ AI Sedang berpikir..."):
+            # Percobaan 1: Menggunakan Google Gemini
+            try:
+                bot_response, model_digunakan = panggil_gemini(prompt)
+            except Exception as e_gemini:
+                # Percobaan 2: Jika Gemini gagal/habis kuota, lempar ke Grok API
+                try:
+                    bot_response, model_digunakan = panggil_grok(prompt)
+                except Exception as e_grok:
+                    # Percobaan 3: Jika Grok juga gagal, pilihan terakhir ke Hugging Face API
+                    try:
+                        bot_response, model_digunakan = panggil_huggingface(prompt)
+                    except Exception as e_hf:
+                        st.error("❌ Seluruh layanan AI (Gemini, Grok, Hugging Face) sedang penuh atau kehabisan kuota!")
+                        st.stop()
+
+        # Tampilkan jawaban beserta tanda model kecil di bawahnya agar Anda tahu siapa yang menjawab
+        st.markdown(bot_response)
+        st.caption(f"🤖 Dibalas oleh: {model_digunakan}")
+        st.session_state.messages.append({"role": "assistant", "content": bot_response})
 
 

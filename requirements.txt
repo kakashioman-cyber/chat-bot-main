@@ -7,3 +7,4 @@ pypdf
 python-dotenv
 streamlit
 upstash-vector
+requests
