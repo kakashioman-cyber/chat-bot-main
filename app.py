@@ -88,21 +88,18 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
     with st.chat_message("assistant"):
         with st.spinner("Sedang mencari di buku sejarah..."):
             try:
-                # A. Ubah pertanyaan menjadi vektor manual dulu
-                query_vector = dapatkan_vektor_pertanyaan(user_query)
+                # ✨ PERBAIKAN TOTAL: Langsung cari menggunakan teks (Query String)
+                # LangChain otomatis memicu GeminiEmbeddings() di dalam fungsi ini
+                docs = db.similarity_search(user_query, k=4)
                 
-                # B. PERBAIKAN UTAMA: Menggunakan fungsi pencarian skor yang sah di Upstash LangChain
-                results_with_score = db.similarity_search_with_score_by_vector(query_vector, k=4)
-                
-                # Ekstrak objek dokumennya saja untuk dibaca Gemini
-                docs = [doc for doc, score in results_with_score]
+                # Susun teks dokumen sebagai konteks RAG
                 context = "\n\n".join([doc.page_content for doc in docs])
                 
-                # C. Prompt khusus RAG
+                # C. Prompt khusus RAG (Ke bawahnya tetap sama seperti kode lama Anda)
                 prompt = f"""
                 Anda adalah seorang pakar Sejarah Nasional Indonesia yang ramah dan edukatif.
                 Tugas Anda adalah menjawab pertanyaan pengguna HANYA berdasarkan informasi (konteks) yang disediakan di bawah ini.
-                If informasi tidak ada di dalam konteks, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban.
+                Jika informasi tidak ada di dalam konteks, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban.
 
                 KONTEKS SEJARAH:
                 {context}
