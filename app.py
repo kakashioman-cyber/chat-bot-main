@@ -208,9 +208,9 @@ if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
         
         ATURAN UTAMA DALAM MENJAWAB:
         1. Jika pengguna melakukan sapaan, mengenalkan nama, atau menanyakan hal personal, jawablah langsung dengan ramah berdasarkan 'RIWAYAT OBROLAN SEBELUMNYA'.
-        2. Perhatikan 'RIWAYAT OBROLAN SEBELUMNYA'. Jika pengguna menanyakan kembali hal yang BARU SAJA dibahas atau menanyakan topik yang sama persis dengan pertanyaan sebelumnya, Anda HARUS merespons secara alami layaknya manusia (misalnya berkata: 'Seperti pertanyaan sebelumnya...', 'Seperti yang sudah saya jelaskan di atas...', atau 'Jawaban untuk hal itu masih sama...'). Jangan mengulang jawaban formal panjang yang sama secara kaku dari awal jika sudah pernah dijawab di atas.
+        2. Perhatikan 'RIWAYAT OBROLAN SEBELUMNYA'. Jika pengguna menanyakan kembali hal yang BARU SAJA dibahas, jawablah secara alami (misal: 'Seperti yang saya jelaskan di atas...'). Jangan mengulang jawaban formal panjang secara kaku.
         3. Gunakan 'KONTEKS DARI BUKU REFERENSI' sebagai dasar utama fakta ilmiah untuk menjawab pertanyaan pengetahuan atau sejarah. 
-        4. Jika informasi yang ditanyakan benar-benar tidak ada di dalam 'KONTEKS DARI BUKU REFERENSI' maupun tidak ada jejak pembahasannya di 'RIWAYAT OBROLAN SEBELUMNYA', katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi Anda. Jangan mengarang jawaban sendiri.
+        4. Jika informasi tidak ada di 'KONTEKS DARI BUKU REFERENSI' maupun di 'RIWAYAT OBROLAN SEBELUMNYA', katakan dengan sopan bahwa informasi tidak ditemukan. Jangan mengarang jawaban.
 
         RIWAYAT OBROLAN SEBELUMNYA:
         {riwayat_teks}
@@ -227,24 +227,37 @@ if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
         bot_response = ""
         model_digunakan = ""
 
-        # 🚀 PROSES CADANGAN BERTINGKAT BARU (100% GRATIS & STABIL)
         with st.spinner("✍️ AI Sedang berpikir..."):
-            # Percobaan 1: Menggunakan Google Gemini 2.5 Flash (Utama)
+            # -----------------------------------------------------------------
+            # ✨ JALUR PENYELAMAT INDEPENDEN (ANTI-SANGKUT GEMINI)
+            # -----------------------------------------------------------------
+            jalur_gemini_sukses = False
+
+            # Langkah A: Coba jalankan Gemini Utama
             try:
                 bot_response, model_digunakan = panggil_gemini(prompt)
-            except Exception as e_gemini:
-                # Percobaan 2: Jika Flash habis kuota menit, lempar ke Gemini 2.5 Pro Gratisan
+                jalur_gemini_sukses = True # Tandai sukses jika lolos
+            except Exception:
+                jalur_gemini_sukses = False
+
+            # Langkah B: Coba jalankan Gemini Cadangan jika yang utama gagal
+            if not jalur_gemini_sukses:
                 try:
                     bot_response, model_digunakan = panggil_gemini_cadangan(prompt)
-                except Exception as e_gemini_pro:
-                    # Percobaan 3: Jika Google sedang tumbang total, lempar ke Llama-3.1 via Hugging Face API
-                    try:
-                        bot_response, model_digunakan = panggil_huggingface(prompt)
-                    except Exception as e_hf:
-                        st.error("❌ Seluruh layanan AI (Gemini Flash, Gemini Pro, Hugging Face) sedang penuh atau kehabisan kuota!")
-                        st.stop()
+                    jalur_gemini_sukses = True
+                except Exception:
+                    jalur_gemini_sukses = False
 
-        # Tampilkan jawaban beserta tanda model kecil di bawahnya
+            # Langkah C: Jika kedua otak Gemini mogok, LANGSUNG tembak Hugging Face secara independen
+            if not jalur_gemini_sukses:
+                try:
+                    bot_response, model_digunakan = panggil_huggingface(prompt)
+                except Exception as e_hf:
+                    st.error(f"❌ Seluruh layanan AI sedang penuh! Pesan error akhir: {e_hf}")
+                    st.stop()
+            # -----------------------------------------------------------------
+
+        # Tampilkan jawaban bersih di layar
         st.markdown(bot_response)
         st.caption(f"🤖 Dibalas oleh: {model_digunakan}")
         st.session_state.messages.append({"role": "assistant", "content": bot_response})
