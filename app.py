@@ -27,8 +27,13 @@ def ambil_mesin_embedding():
 
 mesin_embedding = ambil_mesin_embedding()
 
+# PERBAIKAN: Samakan rumus string hashing agar hasil MD5 identik dengan ingest.py
 def generate_unique_id(text, source_name):
-    return hashlib.md5(f"{source_name}_{text}".encode('utf-8')).hexdigest()
+    # Di ingest.py, metadata["source"] biasanya berisi path lengkap. 
+    # Di app.py, kita paksa formatnya agar sama-sama hanya menggunakan nama file bersihnya saja.
+    import os
+    nama_file_saja = os.path.basename(source_name)
+    return hashlib.md5(f"{nama_file_saja}_{text}".encode('utf-8')).hexdigest()
 
 # 2. Inisialisasi Kredensial Upstash Vector 
 @st.cache_resource
@@ -116,7 +121,7 @@ with st.sidebar:
                 if list_teks:
                     list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
                     # Pastikan nama file disimpan di key "source" agar filter di atas berfungsi sempurna
-                    list_metadatas = [{"source": nama_file} for _ in list_teks]
+                    list_metadatas = [{"source": os.path.basename(nama_file)} for _ in list_teks]
                     
                     with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
                         try:
