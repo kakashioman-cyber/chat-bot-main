@@ -56,30 +56,20 @@ db = init_services()
 # ✨ FUNGSI PEMANGGIL AI CADANGAN (FALLBACK GENERATORS)
 # =========================================================================
 def panggil_gemini(prompt):
+    # Model utama yang Anda gunakan
     model = genai.GenerativeModel('gemini-2.5-flash')
     response = model.generate_content(prompt)
     return response.text, "🧠 Gemini 2.5 Flash"
 
-def panggil_grok(prompt):
-    key = st.secrets.get("GROK_API_KEY") or os.getenv("GROK_API_KEY")
-    if not key:
-        raise ValueError("Key Grok tidak dikonfigurasi")
-        
-    url = "https://x.ai"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {key}"
-    }
-    payload = {
-        "model": "grok-2-1212", 
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False
-    }
-    response = requests.post(url, json=payload, headers=headers)
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"], "🐦 Grok (X.AI)"
+def panggil_gemini_cadangan(prompt):
+    # CADANGAN 1: Jika model utama habis kuota, gunakan model eksperimental Gemini terbaru
+    # Kuota menitnya terpisah dari gemini-2.5-flash sehingga sangat aman untuk cadangan gratis
+    model = genai.GenerativeModel('gemini-2.5-pro')
+    response = model.generate_content(prompt)
+    return response.text, "🚀 Gemini 2.5 Pro (Cadangan)"
 
 def panggil_huggingface(prompt):
+    # CADANGAN 2: Menggunakan model Llama-3.1 terbaru yang servernya jauh lebih sepi dan stabil di HF
     key = st.secrets.get("HUGGINGFACEHUB_API_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not key:
         raise ValueError("Token Hugging Face tidak dikonfigurasi")
@@ -95,9 +85,9 @@ def panggil_huggingface(prompt):
     result = response.json()
     
     if isinstance(result, list) and len(result) > 0:
-        return result[0]["generated_text"], "🤗 Hugging Face (Llama-3)"
+        return result[0]["generated_text"], "🤗 Hugging Face (Llama-3.1)"
     elif isinstance(result, dict) and "generated_text" in result:
-        return result["generated_text"], "🤗 Hugging Face (Llama-3)"
+        return result["generated_text"], "🤗 Hugging Face (Llama-3.1)"
     raise ValueError("Format respon Hugging Face tidak dikenal")
 # =========================================================================
 
@@ -223,24 +213,24 @@ if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
         bot_response = ""
         model_digunakan = ""
 
-        # 🚀 PROSES CADANGAN BERTINGKAT (FALLBACK ENGINE CHAT)
-        with st.spinner("✍️ Sedang berpikir..."):
-            # Percobaan 1: Menggunakan Google Gemini
+        # 🚀 PROSES CADANGAN BERTINGKAT BARU (100% GRATIS & STABIL)
+        with st.spinner("✍️ AI Sedang berpikir..."):
+            # Percobaan 1: Menggunakan Google Gemini 2.5 Flash (Utama)
             try:
                 bot_response, model_digunakan = panggil_gemini(prompt)
             except Exception as e_gemini:
-                # Percobaan 2: Jika Gemini gagal/habis kuota, lempar ke Grok API
+                # Percobaan 2: Jika Flash habis kuota menit, lempar ke Gemini 2.5 Pro Gratisan
                 try:
-                    bot_response, model_digunakan = panggil_grok(prompt)
-                except Exception as e_grok:
-                    # Percobaan 3: Jika Grok juga gagal, pilihan terakhir ke Hugging Face API
+                    bot_response, model_digunakan = panggil_gemini_cadangan(prompt)
+                except Exception as e_gemini_pro:
+                    # Percobaan 3: Jika Google sedang tumbang total, lempar ke Llama-3.1 via Hugging Face API
                     try:
                         bot_response, model_digunakan = panggil_huggingface(prompt)
                     except Exception as e_hf:
-                        st.error("❌ Seluruh layanan AI (Gemini, Grok, Hugging Face) sedang penuh atau kehabisan kuota!")
+                        st.error("❌ Seluruh layanan AI (Gemini Flash, Gemini Pro, Hugging Face) sedang penuh atau kehabisan kuota!")
                         st.stop()
 
-        # Tampilkan jawaban beserta tanda model kecil di bawahnya agar Anda tahu siapa yang menjawab
+        # Tampilkan jawaban beserta tanda model kecil di bawahnya
         st.markdown(bot_response)
         st.caption(f"🤖 Dibalas oleh: {model_digunakan}")
         st.session_state.messages.append({"role": "assistant", "content": bot_response})
