@@ -163,31 +163,41 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
         st.markdown(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Sedang memproses..."):
-            try:
-                # -------------------------------------------------------------
-                # ✨ SENSOR CERDAS (ROUTER): Deteksi Pertanyaan Umum / Riwayat
-                # -------------------------------------------------------------
-                query_lowercased = user_query.lower().strip()
-                
-                # Daftar kata kunci yang CUKUP dijawab dari riwayat (tanpa database)
-                kata_kunci_umum = [
-                    "nama saya", "siapa saya", "halo", "hai", "selamat pagi", 
-                    "selamat siang", "selamat sore", "terima kasih", "makasih",
-                    "apa kabar", "kamu siapa", "siapa kamu"
-                ]
-                
-                # Cek apakah pertanyaan mengandung salah satu kata kunci umum
-                hanya_butuh_riwayat = any(kata in query_lowercased for kata in kata_kunci_umum)
-                
-                context = ""
-                # Jika BUKAN pertanyaan umum, baru kita cari ke Upstash Cloud
-                if not hanya_butuh_riwayat:
-                    # Cari dokumen relevan dari Upstash Cloud
+        # Inisialisasi model Gemini terlebih dahulu
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        # ✨ LANGKAH 1: AI ROUTER (Gemini mendeteksi jenis pertanyaan secara instan)
+        jenis_pertanyaan = "umum"
+        try:
+            prompt_router = f"""
+            Klasifikasikan pertanyaan pengguna ini ke dalam salah satu kategori: 'sejarah' atau 'umum'.
+            - Kategori 'sejarah': Jika menanyakan tentang fakta sejarah Indonesia, tanggal, tokoh pahlawan, atau isi buku referensi.
+            - Kategori 'umum': Jika berupa sapaan, ucapan terima kasih, obrolan santai, atau menanyakan ingatan/informasi personal yang baru saja dibahas (seperti 'siapa nama saya', 'siapa aku', 'tadi kita bahas apa').
+
+            PERTANYAAN: {user_query}
+            KATEGORI (Jawab HANYA dengan 1 kata saja, 'sejarah' atau 'umum'):
+            """
+            respon_router = model.generate_content(prompt_router)
+            jenis_pertanyaan = respon_router.text.lower().strip()
+        except Exception:
+            jenis_pertanyaan = "umum" # Jaga-jaga jika API error, default ke umum
+
+        # ✨ LANGKAH 2: PROSES BERDASARKAN HASIL DETEKSI AI
+        context = ""
+        
+        # Jika AI mendeteksi ini pertanyaan sejarah, kita tampilkan spinner khusus pencarian buku
+        if "sejarah" in jenis_pertanyaan:
+            with st.spinner("🔍 Sedang mencari di buku sejarah..."):
+                try:
                     docs = db.similarity_search(user_query, k=4)
                     context = "\n\n".join([doc.page_content for doc in docs])
-                # -------------------------------------------------------------
-                
+                except Exception as e:
+                    st.error(f"⚠️ Gagal mengakses Upstash: {e}")
+        
+        # Jika "umum", kita langsung lompat ke tahap pembuatan jawaban (Bypass Upstash)
+        # Kita beri spinner halus saat AI merangkai kata agar user tahu bot sedang bekerja
+        with st.spinner("✍️ Sedang mengetik..."):
+            try:
                 # Susun Riwayat Obrolan Sebelumnya (Maksimal 6 pesan terakhir)
                 riwayat_teks = ""
                 for msg in st.session_state.messages[:-1][-6:]: 
@@ -197,13 +207,13 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
                 if not riwayat_teks:
                     riwayat_teks = "(Belum ada obrolan sebelumnya)"
                 
-                # Prompt adaptif: Menyesuaikan apakah ada konteks buku atau tidak
-                prompt = f"""
+                # Prompt Akhir untuk Gemini menghasilkan jawaban edukatif
+                prompt_akhir = f"""
                 Anda adalah seorang pakar Sejarah Nasional Indonesia yang ramah dan edukatif.
                 
                 TUGAS ANDA:
-                1. Jika KONTEKS SEJARAH DARI BUKU di bawah ini terisi, jawablah pertanyaan pengguna HANYA berdasarkan informasi tersebut. Jika tidak ada di buku, katakan tidak ditemukan dengan sopan.
-                2. Jika KONTEKS SEJARAH DARI BUKU di bawah ini KOSONG, berarti ini adalah obrolan umum atau pertanyaan tentang riwayat. Jawablah langsung berdasarkan informasi yang ada di RIWAYAT OBROLAN SEBELUMNYA (seperti nama pengguna, sapaan, dll).
+                1. Jika KONTEKS SEJARAH DARI BUKU terisi, jawablah pertanyaan pengguna HANYA berdasarkan informasi tersebut. Jika tidak ditemukan di buku, katakan dengan sopan bahwa informasi tersebut tidak ada di buku referensi.
+                2. Jika KONTEKS SEJARAH DARI BUKU KOSONG, berarti ini adalah obrolan umum atau pertanyaan tentang ingatan/riwayat. Jawablah secara alami berdasarkan informasi yang tertulis di RIWAYAT OBROLAN SEBELUMNYA (seperti sapaan, nama pengguna, atau panggilan 'siapa aku').
 
                 RIWAYAT OBROLAN SEBELUMNYA:
                 {riwayat_teks}
@@ -217,16 +227,14 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
                 JAWABAN ANDA:
                 """
 
-                # Panggil model Gemini
-                model = genai.GenerativeModel('gemini-2.5-flash')
-                response = model.generate_content(prompt)
-                
+                response = model.generate_content(prompt_akhir)
                 bot_response = response.text
+                
                 st.markdown(bot_response)
                 st.session_state.messages.append({"role": "assistant", "content": bot_response})
                 
             except Exception as e:
-                st.error(f"❌ Terjadi kesalahan: {e}")
+                st.error(f"❌ Terjadi kesalahan saat menyusun jawaban: {e}")
 
 
 
