@@ -73,33 +73,37 @@ def panggil_huggingface(prompt):
     if not key:
         raise ValueError("Token Hugging Face tidak dikonfigurasi")
         
-    # ✨ PERBAIKAN MUTLAK: Menggunakan URL Endpoint v1 Chat resmi terbaru dari Hugging Face
+    # Endpoint Llama-3.1-8B-Instruct resmi gratis kilat dari Hugging Face
     url = "https://huggingface.co"
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
     
-    # Format data disesuaikan dengan standar pesan (Messages object)
+    # ✨ PERBAIKAN MUTLAK: Bungkus prompt ke format chat template Llama-3.1 agar diterima server
+    prompt_terstruktur = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+    
     payload = {
-        "model": "Qwen/Qwen2.5-7B-Instruct", # Menggunakan model Qwen 2.5 yang sangat responsif
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 512,
-        "temperature": 0.7
+        "inputs": prompt_terstruktur,
+        "parameters": {
+            "max_new_tokens": 512, 
+            "return_full_text": False,
+            "temperature": 0.7
+        }
     }
     
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
     result = response.json()
     
-    # Ekstrak hasil teks dari struktur format standar v1 Chat
-    try:
-        teks_balasan = result["choices"][0]["message"]["content"]
-        return teks_balasan, "🤗 Hugging Face (Qwen-2.5)"
-    except Exception:
-        raise ValueError(f"Gagal membaca JSON Hugging Face. Respon: {result}")
+    # ✨ Ekstrak teks secara presisi berdasarkan format keluaran Hugging Face
+    if isinstance(result, list) and len(result) > 0:
+        teks_balasan = result[0].get("generated_text", "")
+        return teks_balasan, "🤗 Hugging Face (Llama-3.1)"
+    elif isinstance(result, dict) and "generated_text" in result:
+        return result["generated_text"], "🤗 Hugging Face (Llama-3.1)"
+        
+    raise ValueError("Format respon Hugging Face tidak dikenal")
 # =========================================================================
 
 # =========================================================================
