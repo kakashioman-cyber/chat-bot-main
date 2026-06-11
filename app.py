@@ -163,29 +163,47 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
         st.markdown(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Sedang mencari di buku sejarah..."):
+        with st.spinner("Sedang memproses..."):
             try:
-                # A. Ambil dokumen relevan dari Upstash Cloud
-                docs = db.similarity_search(user_query, k=4)
-                context = "\n\n".join([doc.page_content for doc in docs])
+                # -------------------------------------------------------------
+                # ✨ SENSOR CERDAS (ROUTER): Deteksi Pertanyaan Umum / Riwayat
+                # -------------------------------------------------------------
+                query_lowercased = user_query.lower().strip()
                 
-                # ✨ FITUR BARU: Susun Riwayat Obrolan Sebelumnya ke dalam format teks
+                # Daftar kata kunci yang CUKUP dijawab dari riwayat (tanpa database)
+                kata_kunci_umum = [
+                    "nama saya", "siapa saya", "halo", "hai", "selamat pagi", 
+                    "selamat siang", "selamat sore", "terima kasih", "makasih",
+                    "apa kabar", "kamu siapa", "siapa kamu"
+                ]
+                
+                # Cek apakah pertanyaan mengandung salah satu kata kunci umum
+                hanya_butuh_riwayat = any(kata in query_lowercased for kata in kata_kunci_umum)
+                
+                context = ""
+                # Jika BUKAN pertanyaan umum, baru kita cari ke Upstash Cloud
+                if not hanya_butuh_riwayat:
+                    # Cari dokumen relevan dari Upstash Cloud
+                    docs = db.similarity_search(user_query, k=4)
+                    context = "\n\n".join([doc.page_content for doc in docs])
+                # -------------------------------------------------------------
+                
+                # Susun Riwayat Obrolan Sebelumnya (Maksimal 6 pesan terakhir)
                 riwayat_teks = ""
-                # Mengambil maksimal 6 pesan terakhir agar prompt tidak terlalu panjang/penuh
                 for msg in st.session_state.messages[:-1][-6:]: 
                     peran = "Pengguna" if msg["role"] == "user" else "Asisten/Anda"
                     riwayat_teks += f"{peran}: {msg['content']}\n"
                 
                 if not riwayat_teks:
-                    riwayat_teks = "(Belum ada obrolan sebelumnya, ini adalah pertanyaan pertama)"
+                    riwayat_teks = "(Belum ada obrolan sebelumnya)"
                 
-                # B. Prompt khusus RAG yang mendukung Ingatan Obrolan (Contextual Memory)
+                # Prompt adaptif: Menyesuaikan apakah ada konteks buku atau tidak
                 prompt = f"""
                 Anda adalah seorang pakar Sejarah Nasional Indonesia yang ramah dan edukatif.
-                Tugas Anda adalah menjawab pertanyaan pengguna berdasarkan KONTEKS SEJARAH yang disediakan.
-                Gunakan RIWAYAT OBROLAN untuk memahami referensi kata ganti (seperti 'dia', 'itu', 'tadi') jika pertanyaan pengguna merupakan kelanjutan dari obrolan sebelumnya.
-
-                Jika informasi tidak ada di dalam konteks sejarah, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban sendiri.
+                
+                TUGAS ANDA:
+                1. Jika KONTEKS SEJARAH DARI BUKU di bawah ini terisi, jawablah pertanyaan pengguna HANYA berdasarkan informasi tersebut. Jika tidak ada di buku, katakan tidak ditemukan dengan sopan.
+                2. Jika KONTEKS SEJARAH DARI BUKU di bawah ini KOSONG, berarti ini adalah obrolan umum atau pertanyaan tentang riwayat. Jawablah langsung berdasarkan informasi yang ada di RIWAYAT OBROLAN SEBELUMNYA (seperti nama pengguna, sapaan, dll).
 
                 RIWAYAT OBROLAN SEBELUMNYA:
                 {riwayat_teks}
@@ -199,7 +217,7 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
                 JAWABAN ANDA:
                 """
 
-                # C. Panggil model Gemini untuk menghasilkan jawaban berdasar konteks + memori
+                # Panggil model Gemini
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 response = model.generate_content(prompt)
                 
