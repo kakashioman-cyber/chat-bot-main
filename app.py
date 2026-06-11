@@ -165,25 +165,41 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
     with st.chat_message("assistant"):
         with st.spinner("Sedang mencari di buku sejarah..."):
             try:
-                # LangChain otomatis mengubah pertanyaan menjadi vektor 384 dimensi gratis lewat Hugging Face
+                # A. Ambil dokumen relevan dari Upstash Cloud
                 docs = db.similarity_search(user_query, k=4)
                 context = "\n\n".join([doc.page_content for doc in docs])
                 
+                # ✨ FITUR BARU: Susun Riwayat Obrolan Sebelumnya ke dalam format teks
+                riwayat_teks = ""
+                # Mengambil maksimal 6 pesan terakhir agar prompt tidak terlalu panjang/penuh
+                for msg in st.session_state.messages[:-1][-6:]: 
+                    peran = "Pengguna" if msg["role"] == "user" else "Asisten/Anda"
+                    riwayat_teks += f"{peran}: {msg['content']}\n"
+                
+                if not riwayat_teks:
+                    riwayat_teks = "(Belum ada obrolan sebelumnya, ini adalah pertanyaan pertama)"
+                
+                # B. Prompt khusus RAG yang mendukung Ingatan Obrolan (Contextual Memory)
                 prompt = f"""
                 Anda adalah seorang pakar Sejarah Nasional Indonesia yang ramah dan edukatif.
-                Tugas Anda adalah menjawab pertanyaan pengguna HANYA berdasarkan informasi (konteks) yang disediakan di bawah ini.
-                Jika informasi tidak ada di dalam konteks, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban.
+                Tugas Anda adalah menjawab pertanyaan pengguna berdasarkan KONTEKS SEJARAH yang disediakan.
+                Gunakan RIWAYAT OBROLAN untuk memahami referensi kata ganti (seperti 'dia', 'itu', 'tadi') jika pertanyaan pengguna merupakan kelanjutan dari obrolan sebelumnya.
 
-                KONTEKS SEJARAH:
+                Jika informasi tidak ada di dalam konteks sejarah, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban sendiri.
+
+                RIWAYAT OBROLAN SEBELUMNYA:
+                {riwayat_teks}
+
+                KONTEKS SEJARAH DARI BUKU:
                 {context}
 
-                PERTANYAAN PENGGUNA:
+                PERTANYAAN TERBARU PENGGUNA:
                 {user_query}
 
-                JAWABAN:
+                JAWABAN ANDA:
                 """
 
-                # 💡 API KEY GEMINI SEKARANG HANYA DIGUNAKAN DI SINI UNTUK GENERATE TEXT JAWABAN
+                # C. Panggil model Gemini untuk menghasilkan jawaban berdasar konteks + memori
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 response = model.generate_content(prompt)
                 
