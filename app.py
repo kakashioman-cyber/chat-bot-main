@@ -176,6 +176,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# 6. Tangani Input Pertanyaan Pengguna dan Proses Jawaban AI dengan Sistem Cadangan Bertingkat
 if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -199,11 +200,13 @@ if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
             riwayat_teks = "(Belum ada obrolan sebelumnya)"
         
         prompt = f"""
-        Anda adalah seorang pakar dan asisten edukatif yang ramah.
-        Tugas Anda adalah menjawab pertanyaan pengguna BERDASARKAN KONTEKS DI BAWAH INI.
-        Gunakan RIWAYAT OBROLAN untuk memahami kelanjutan percakapan sebelumnya jika ada.
-
-        Jika informasi tidak ada di dalam konteks, katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi. Jangan mengarang jawaban sendiri.
+        Anda adalah seorang pakar dan asisten edukatif yang ramah serta interaktif.
+        
+        ATURAN UTAMA DALAM MENJAWAB:
+        1. Jika pengguna melakukan sapaan, mengenalkan nama, atau menanyakan hal personal, jawablah langsung dengan ramah berdasarkan 'RIWAYAT OBROLAN SEBELUMNYA'.
+        2. Perhatikan 'RIWAYAT OBROLAN SEBELUMNYA'. Jika pengguna menanyakan kembali hal yang BARU SAJA dibahas atau menanyakan topik yang sama persis dengan pertanyaan sebelumnya, Anda HARUS merespons secara alami layaknya manusia (misalnya berkata: 'Seperti pertanyaan sebelumnya...', 'Seperti yang sudah saya jelaskan di atas...', atau 'Jawaban untuk hal itu masih sama...'). Jangan mengulang jawaban formal panjang yang sama secara kaku dari awal jika sudah pernah dijawab di atas.
+        3. Gunakan 'KONTEKS DARI BUKU REFERENSI' sebagai dasar utama fakta ilmiah untuk menjawab pertanyaan pengetahuan atau sejarah. 
+        4. Jika informasi yang ditanyakan benar-benar tidak ada di dalam 'KONTEKS DARI BUKU REFERENSI' maupun tidak ada jejak pembahasannya di 'RIWAYAT OBROLAN SEBELUMNYA', katakan dengan sopan bahwa informasi tersebut tidak ditemukan di dalam buku referensi Anda. Jangan mengarang jawaban sendiri.
 
         RIWAYAT OBROLAN SEBELUMNYA:
         {riwayat_teks}
@@ -221,7 +224,7 @@ if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
         model_digunakan = ""
 
         # 🚀 PROSES CADANGAN BERTINGKAT (FALLBACK ENGINE CHAT)
-        with st.spinner("✍️ AI Sedang berpikir..."):
+        with st.spinner("✍️ Sedang berpikir..."):
             # Percobaan 1: Menggunakan Google Gemini
             try:
                 bot_response, model_digunakan = panggil_gemini(prompt)
