@@ -62,13 +62,16 @@ def main():
         if teks_lowercased.isdigit():
             continue
             
-        # ✨ SISTEM ANTIDUPLIKAT PINTAR LOKAL:
+        # ✨ PERBAIKAN LOGIKA SISTEM ANTIDUPLIKAT:
         chunk_id = generate_unique_id(chunk)
         
         # Tanya cepat ke Upstash apakah ID bagian ini sudah pernah diunggah
         hasil_cek = upstash_client.fetch(ids=[chunk_id], include_vectors=False)
-        if hasil_cek and hasil_cek is not None and len(hasil_cek) > 0:
-            continue # Jika sudah ada di cloud, langsung lewati tanpa proses ulang
+        
+        # PERBAIKAN: Periksa apakah elemen pertama di dalam list hasil pencarian bernilai None
+        # Jika hasil_cek kosong, atau elemen pertamanya adalah None, artinya ID ini BELUM ADA di database baru.
+        if hasil_cek and hasil_cek[0] is not None:
+            continue # Jika elemen pertamanya bukan None, baru kita lewati karena datanya memang ada
             
         chunks_bersih.append(chunk)
         
