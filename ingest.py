@@ -8,63 +8,26 @@ import hashlib
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFDirectoryLoader, DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.embeddings import Embeddings
-import google.generativeai as genai
-# ✨ IMPOR LANGSUNG DRIVER RESMI UPSTASH
+from langchain_community.embeddings import HuggingFaceEmbeddings # ✨ Menggunakan Hugging Face gratis
 from upstash_vector import Index
 
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
 UPSTASH_URL = os.getenv("UPSTASH_VECTOR_REST_URL")
 UPSTASH_TOKEN = os.getenv("UPSTASH_VECTOR_REST_TOKEN")
 
-if not api_key or not UPSTASH_URL or not UPSTASH_TOKEN:
-    raise ValueError("❌ Periksa kembali file .env Anda! API Key atau Kredensial Upstash kosong.")
+if not UPSTASH_URL or not UPSTASH_TOKEN:
+    raise ValueError("❌ Kredensial Upstash Vector tidak ditemukan di file .env!")
 
-genai.configure(api_key=api_key)
-
-# Kelas Pembantu Gemini Embeddings 768 Dimensi
-class GeminiEmbeddings(Embeddings):
-    def embed_documents(self, texts):
-        embeddings = []
-        batch_size = 20
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i + batch_size]
-            try:
-                response = genai.embed_content(
-                    model="models/gemini-embedding-001", 
-                    content=batch_texts, 
-                    task_type="retrieval_document",
-                    output_dimensionality=768
-                )
-                embeddings.extend(response['embedding'])
-                print(f"📦 Berhasil memproses vektor Gemini ke {i} sampai {i + len(batch_texts)}")
-                time.sleep(6) 
-            except Exception as e:
-                print(f"⚠️ Kuota habis, menunggu 30 detik untuk pemulihan...")
-                time.sleep(30)
-                response = genai.embed_content(
-                    model="models/gemini-embedding-001", 
-                    content=batch_texts, 
-                    task_type="retrieval_document",
-                    output_dimensionality=768
-                )
-                embeddings.extend(response['embedding'])
-        return embeddings
-
-    def embed_query(self, text):
-        response = genai.embed_content(
-            model="models/gemini-embedding-001", 
-            content=text, 
-            task_type="retrieval_query",
-            output_dimensionality=768
-        )
-        return response['embedding']
+# 1. Inisialisasi Model Embedding Gratis dari Hugging Face (100% Bebas Kuota)
+print("🤗 Memuat model embedding Hugging Face (all-MiniLM-L6-v2)...")
+mesin_embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 def generate_unique_id(chunk):
     source = chunk.metadata.get("source", "unknown")
+    # Bersihkan path folder agar menyisakan nama file aslinya saja
+    nama_file_saja = os.path.basename(source)
     content = chunk.page_content
-    return hashlib.md5(f"{source}_{content}".encode('utf-8')).hexdigest()
+    return hashlib.md5(f"{nama_file_saja}_{content}".encode('utf-8')).hexdigest()
 
 def main():
     print("📂 Membaca file Buku Sejarah di folder './data'...")
@@ -77,7 +40,7 @@ def main():
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_documents(all_docs)
     
-    # ✨ SOLUSI UTAMA: Inisialisasi Klien Driver Native Upstash
+    # Inisialisasi Klien Driver Native Upstash Cloud
     upstash_client = Index(url=UPSTASH_URL, token=UPSTASH_TOKEN)
 
     # DAFTAR KATA KUNCI YANG INGIN DIABAIKAN
@@ -88,6 +51,8 @@ def main():
     ]
     
     chunks_bersih = []
+    print("🔍 Menyaring data sampah dan mendeteksi file duplikat di cloud...")
+    
     for chunk in chunks:
         teks_lowercased = chunk.page_content.lower().strip()
         if len(teks_lowercased) < 15: 
@@ -96,41 +61,49 @@ def main():
             continue
         if teks_lowercased.isdigit():
             continue
+            
+        # ✨ SISTEM ANTIDUPLIKAT PINTAR LOKAL:
+        chunk_id = generate_unique_id(chunk)
+        
+        # Tanya cepat ke Upstash apakah ID bagian ini sudah pernah diunggah
+        hasil_cek = upstash_client.fetch(ids=[chunk_id], include_vectors=False)
+        if hasil_cek and hasil_cek is not None and len(hasil_cek) > 0:
+            continue # Jika sudah ada di cloud, langsung lewati tanpa proses ulang
+            
         chunks_bersih.append(chunk)
         
-    print(f"🧹 Filter Selesai: Dari {len(chunks)} dipangkas menjadi {len(chunks_bersih)} bagian bersih.")
+    print(f"🧹 Filter Selesai: Dari {len(chunks)} bagian, ditemukan {len(chunks_bersih)} bagian BARU.")
     
     if not chunks_bersih:
-        print("😎 Tidak ada dokumen baru atau bersih yang perlu diunggah.")
+        print("😎 Semua dokumen di folder './data' sudah tersimpan di Upstash Cloud. Tidak ada data baru.")
         return
     
-    print(f"🚀 Memulai konversi {len(chunks_bersih)} bagian dokumen bersih dengan Gemini...")
+    print(f"🚀 Memulai konversi {len(chunks_bersih)} teks baru ke vektor 384 Dimensi (Gratis via Hugging Face)...")
     list_teks = [chunk.page_content for chunk in chunks_bersih]
     
-    mesin_embedding = GeminiEmbeddings()
-    vektor_hasil_gemini = mesin_embedding.embed_documents(list_teks)
+    # ✨ PROSES EMBEDDING SEKARANG GRATIS LEWAT LAPTOP ANDA TANPA PERLU KUOTA GOOGLE GEMINI
+    vektor_hasil_huggingface = mesin_embedding.embed_documents(list_teks)
     
-    # Format data berupa objek Tuple/Kamus resmi untuk upstash_vector SDK
+    # Susun data sesuai objek tuple Upstash
     vektor_siap_kirim = []
     for i, chunk in enumerate(chunks_bersih):
         chunk_id = generate_unique_id(chunk)
         
         metadata_gabungan = chunk.metadata.copy()
+        # Ambil nama file bersihnya saja untuk metadata
+        metadata_gabungan["source"] = os.path.basename(chunk.metadata.get("source", "unknown"))
         metadata_gabungan["text"] = chunk.page_content 
         
-        # Format pengiriman Driver Native: (id, vector, metadata)
         vektor_siap_kirim.append((
             chunk_id,
-            vektor_hasil_gemini[i],
+            vektor_hasil_huggingface[i], # Array berisi 384 angka koordinat
             metadata_gabungan
         ))
         
     print("🔌 Mengunggah kumpulan vektor kustom langsung ke Cloud Upstash...")
-    
-    # ✨ TEMBAK LANGSUNG LEWAT DRIVER NATIVE (100% AMAN & ANTI-BUG)
+    # Kirim data menggunakan format native (aman dari bug parameter LangChain)
     upstash_client.upsert(vectors=vektor_siap_kirim)
-    
-    print("✅ SELESAI! Seluruh database RAG berhasil disimpan di Upstash Cloud!")
+    print("✅ SELESAI! Seluruh database RAG berhasil diperbarui ke Cloud Upstash menggunakan 384 Dimensi!")
 
 if __name__ == "__main__":
     main()

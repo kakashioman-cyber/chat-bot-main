@@ -5,3 +5,4 @@ pypdf
 python-dotenv
 streamlit
 upstash-vector
+sentence-transformers

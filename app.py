@@ -1,57 +1,36 @@
 import os
 import streamlit as st
+import hashlib
 from dotenv import load_dotenv
 from langchain_community.vectorstores import UpstashVectorStore
-from langchain_core.embeddings import Embeddings  # ✨ WAJIB IMPORT INI
+from langchain_community.embeddings import HuggingFaceEmbeddings # ✨ IMPORT EMBEDDING BARU
 import google.generativeai as genai
 
-# 1. Konfigurasi Halaman Web Streamlit
 st.set_page_config(page_title="Chatbot Sejarah Nasional", page_icon="📜", layout="centered")
 st.title("📜 Chatbot Sejarah Nasional Indonesia")
 st.write("Tanyakan apa saja tentang sejarah Indonesia!")
 
-# 2. Muat API Key dari .env
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 
 if not api_key:
-    st.error("❌ API Key tidak ditemukan di file .env!")
+    st.error("❌ API Key Gemini tidak ditemukan!")
     st.stop()
 
-# Konfigurasi API Key untuk pustaka google-generativeai
 genai.configure(api_key=api_key)
 
-# 3. Kelas Embedding Kustom Resmi LangChain (Disamakan dengan ingest.py)
-class GeminiEmbeddings(Embeddings):
-    def embed_documents(self, texts):
-        embeddings = []
-        batch_size = 20
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i + batch_size]
-            response = genai.embed_content(
-                model="models/gemini-embedding-001", 
-                content=batch_texts, 
-                task_type="retrieval_document",
-                output_dimensionality=768
-            )
-            embeddings.extend(response['embedding'])
-        return embeddings
+# 1. Inisialisasi Model Embedding Gratis dari Hugging Face
+@st.cache_resource
+def ambil_mesin_embedding():
+    # Model ini sangat ringan, akurat untuk teks, berukuran 384 dimensi, dan 100% GRATIS
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-    def embed_query(self, text):
-        response = genai.embed_content(
-            model="models/gemini-embedding-001", 
-            content=text, 
-            task_type="retrieval_query",
-            output_dimensionality=768  # ✨ WAJIB 768 DIMENSI
-        )
-        return response['embedding']
+mesin_embedding = ambil_mesin_embedding()
 
-# Fungsi Pembantu Eksternal untuk Query
-def dapatkan_vektor_pertanyaan(text):
-    mesin_embedding = GeminiEmbeddings()
-    return mesin_embedding.embed_query(text)
+def generate_unique_id(text, source_name):
+    return hashlib.md5(f"{source_name}_{text}".encode('utf-8')).hexdigest()
 
-# 4. Inisialisasi Kredensial Upstash Vector 
+# 2. Inisialisasi Kredensial Upstash Vector 
 @st.cache_resource
 def init_services():
     upstash_url = st.secrets.get("UPSTASH_VECTOR_REST_URL") or os.getenv("UPSTASH_VECTOR_REST_URL")
@@ -61,9 +40,8 @@ def init_services():
         st.error("❌ Kredensial Upstash Vector tidak ditemukan!")
         st.stop()
         
-    # ✨ PERBAIKAN: Gunakan kelas GeminiEmbeddings() asli agar constructor LangChain lolos validasi
     return UpstashVectorStore(
-        embedding=GeminiEmbeddings(),        
+        embedding=mesin_embedding, # ✨ Pasang mesin embedding Hugging Face ke Upstash
         text_key="text",
         index_url=upstash_url,
         index_token=upstash_token
@@ -71,7 +49,89 @@ def init_services():
 
 db = init_services()
 
-# 5. Kelola Riwayat Obrolan
+# =========================================================================
+# ✨ MENU SIDEBAR: DETEKSI DUPLIKAT & PEMROSESAN PYTHON
+# =========================================================================
+with st.sidebar:
+    st.header("📂 Tambah Buku Sejarah")
+    uploaded_file = st.file_uploader("Unggah file PDF Buku Sejarah Baru", type=["pdf"])
+    
+    if uploaded_file is not None:
+        if st.button("🚀 Proses & Unggah ke Cloud"):
+            nama_file = uploaded_file.name
+            
+            with st.spinner("🔍 Memeriksa apakah dokumen sudah pernah diunggah..."):
+                try:
+                    # Lakukan pencarian cepat di Upstash berdasarkan nama file
+                    # Kita menggunakan filter metadata bawaan Upstash melalui LangChain
+                    filter_metadata = {"source": nama_file}
+                    
+                    # Cari 1 sampel data saja yang memiliki nama file yang sama
+                    dokumen_kembar = db.similarity_search(
+                        query="sejarah", # Kata kunci acak untuk memicu pencarian
+                        k=1, 
+                        filter=filter_metadata
+                    )
+                    
+                    # JIKA DITEMUKAN: Berarti file ini sudah pernah diunggah sebelumnya
+                    if dokumen_kembar:
+                        st.warning(f"⚠️ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah dan tersimpan di Upstash Cloud.")
+                        st.stop() # Hentikan proses agar tidak buang-buang kuota
+                        
+                except Exception as e:
+                    # Jika indeks masih benar-benar kosong, abaikan error pencarian metadata ini
+                    pass
+
+            with st.spinner("Python sedang memproses teks dokumen..."):
+                from pypdf import PdfReader
+                reader = PdfReader(uploaded_file)
+                
+                teks_seluruh_buku = ""
+                kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
+                
+                for halaman in reader.pages:
+                    teks_halaman = halaman.extract_text()
+                    if not teks_halaman: 
+                        continue
+                    teks_lowercased = teks_halaman.lower().strip()
+                    if len(teks_lowercased) < 15: 
+                        continue
+                    if any(kata in teks_lowercased for kata in kata_kunci_sampah): 
+                        continue
+                    if teks_lowercased.isdigit(): 
+                        continue
+                    teks_seluruh_buku += teks_halaman + "\n"
+
+                chunk_size = 1000
+                chunk_overlap = 200
+                list_teks = []
+                start = 0
+                while start < len(teks_seluruh_buku):
+                    end = start + chunk_size
+                    list_teks.append(teks_seluruh_buku[start:end])
+                    start += (chunk_size - chunk_overlap)
+
+                st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
+
+                if list_teks:
+                    list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
+                    # Pastikan nama file disimpan di key "source" agar filter di atas berfungsi sempurna
+                    list_metadatas = [{"source": nama_file} for _ in list_teks]
+                    
+                    with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
+                        try:
+                            db.add_texts(
+                                texts=list_teks,
+                                metadatas=list_metadatas,
+                                ids=list_ids
+                            )
+                            st.success(f"✅ Berhasil! Buku '{nama_file}' kini aman tersimpan di Upstash Cloud!")
+                        except Exception as e:
+                            st.error(f"❌ Gagal mengunggah: {e}")
+                else:
+                    st.warning("⚠️ File tidak berisi teks sejarah yang lolos sensor filter Python.")
+
+# 3. Kelola Riwayat Obrolan
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -79,7 +139,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 6. Input Chat dari Pengguna 
+# 4. Input Chat dari Pengguna
 if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -88,14 +148,10 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
     with st.chat_message("assistant"):
         with st.spinner("Sedang mencari di buku sejarah..."):
             try:
-                # ✨ PERBAIKAN TOTAL: Langsung cari menggunakan teks (Query String)
-                # LangChain otomatis memicu GeminiEmbeddings() di dalam fungsi ini
+                # LangChain otomatis mengubah pertanyaan menjadi vektor 384 dimensi gratis lewat Hugging Face
                 docs = db.similarity_search(user_query, k=4)
-                
-                # Susun teks dokumen sebagai konteks RAG
                 context = "\n\n".join([doc.page_content for doc in docs])
                 
-                # C. Prompt khusus RAG (Ke bawahnya tetap sama seperti kode lama Anda)
                 prompt = f"""
                 Anda adalah seorang pakar Sejarah Nasional Indonesia yang ramah dan edukatif.
                 Tugas Anda adalah menjawab pertanyaan pengguna HANYA berdasarkan informasi (konteks) yang disediakan di bawah ini.
@@ -110,6 +166,7 @@ if user_query := st.chat_input("Ketik pertanyaan sejarah di sini..."):
                 JAWABAN:
                 """
 
+                # 💡 API KEY GEMINI SEKARANG HANYA DIGUNAKAN DI SINI UNTUK GENERATE TEXT JAWABAN
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 response = model.generate_content(prompt)
                 
