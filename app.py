@@ -59,69 +59,84 @@ db = init_services()
 # =========================================================================
 with st.sidebar:
     st.header("📂 Tambah Buku Sejarah")
-    uploaded_file = st.file_uploader("Unggah file PDF Buku Sejarah Baru", type=["pdf"])
+    
+    # PERBAIKAN: Menerima file PDF dan TXT sekaligus
+    uploaded_file = st.file_uploader("Unggah file Buku Sejarah Baru", type=["pdf", "txt"])
     
     if uploaded_file is not None:
         if st.button("🚀 Proses & Unggah ke Cloud"):
-            nama_file = uploaded_file.name
+            import os
+            nama_file = os.path.basename(uploaded_file.name)
             
-            with st.spinner("🔍 Memeriksa apakah dokumen sudah pernah diunggah..."):
+            # -----------------------------------------------------------------
+            # ✨ KUNCI UTAMA: PENOLAKAN INSTAN DI DETIK PERTAMA
+            # -----------------------------------------------------------------
+            with st.spinner("🔍 Memeriksa database cloud..."):
                 try:
-                    # Lakukan pencarian cepat di Upstash berdasarkan nama file
-                    # Kita menggunakan filter metadata bawaan Upstash melalui LangChain
+                    # Lakukan pencarian metadata berdasarkan nama file di Upstash
                     filter_metadata = {"source": nama_file}
-                    
-                    # Cari 1 sampel data saja yang memiliki nama file yang sama
                     dokumen_kembar = db.similarity_search(
-                        query="sejarah", # Kata kunci acak untuk memicu pencarian
+                        query="sejarah", # Kata kunci pemicu pencarian biasa
                         k=1, 
                         filter=filter_metadata
                     )
                     
-                    # JIKA DITEMUKAN: Berarti file ini sudah pernah diunggah sebelumnya
+                    # JIKA DITEMUKAN: Tolak langsung dan hentikan program!
                     if dokumen_kembar:
-                        st.warning(f"⚠️ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah dan tersimpan di Upstash Cloud.")
-                        st.stop() # Hentikan proses agar tidak buang-buang kuota
+                        st.warning(f"❌ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah sebelumnya.")
+                        st.stop() # Menghentikan proses Streamlit seketika
                         
                 except Exception as e:
-                    # Jika indeks masih benar-benar kosong, abaikan error pencarian metadata ini
+                    # Jika database masih benar-benar kosong dari awal, abaikan error filter ini
                     pass
+            # -----------------------------------------------------------------
 
-            with st.spinner("Python sedang memproses teks dokumen..."):
-                from pypdf import PdfReader
-                reader = PdfReader(uploaded_file)
-                
+            # JIKA LOLOS FILTER, MULAI BACA ISI FILE SECARA OTOMATIS
+            with st.spinner("Python sedang membaca isi dokumen..."):
                 teks_seluruh_buku = ""
-                kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
                 
-                for halaman in reader.pages:
-                    teks_halaman = halaman.extract_text()
-                    if not teks_halaman: 
-                        continue
-                    teks_lowercased = teks_halaman.lower().strip()
-                    if len(teks_lowercased) < 15: 
-                        continue
-                    if any(kata in teks_lowercased for kata in kata_kunci_sampah): 
-                        continue
-                    if teks_lowercased.isdigit(): 
-                        continue
-                    teks_seluruh_buku += teks_halaman + "\n"
+                # Cek Ekstrak File berdasarkan tipe ekensinya
+                if nama_file.endswith('.pdf'):
+                    from pypdf import PdfReader
+                    reader = PdfReader(uploaded_file)
+                    for halaman in reader.pages:
+                        teks_halaman = halaman.extract_text()
+                        if teks_halaman:
+                            teks_seluruh_buku += teks_halaman + "\n"
+                            
+                elif nama_file.endswith('.txt'):
+                    # Membaca file teks biasa menggunakan Python standar
+                    teks_seluruh_buku = uploaded_file.read().decode("utf-8")
 
+                # Proses Penyaringan Kata Kunci Sampah
+                kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
+                lines = teks_seluruh_buku.split("\n")
+                lines_bersih = []
+                
+                for line in lines:
+                    line_lowercased = line.lower().strip()
+                    if len(line_lowercased) < 15: continue
+                    if any(kata in line_lowercased for kata in kata_kunci_sampah): continue
+                    if line_lowercased.isdigit(): continue
+                    lines_bersih.append(line)
+                    
+                teks_bersih_final = "\n".join(lines_bersih)
+
+                # PROSES CHUNKING MURNI PYTHON (Konsep Slide Window)
                 chunk_size = 1000
                 chunk_overlap = 200
                 list_teks = []
                 start = 0
-                while start < len(teks_seluruh_buku):
+                while start < len(teks_bersih_final):
                     end = start + chunk_size
-                    list_teks.append(teks_seluruh_buku[start:end])
+                    list_teks.append(teks_bersih_final[start:end])
                     start += (chunk_size - chunk_overlap)
 
                 st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
 
                 if list_teks:
                     list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
-                    # Pastikan nama file disimpan di key "source" agar filter di atas berfungsi sempurna
-                    list_metadatas = [{"source": os.path.basename(nama_file)} for _ in list_teks]
+                    list_metadatas = [{"source": nama_file} for _ in list_teks]
                     
                     with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
                         try:
