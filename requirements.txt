@@ -1,11 +1,8 @@
 google-generativeai
 langchain-community
 langchain-core
-langchain-huggingface
-sentence-transformers
-torch
-huggingface-hub
 pypdf
 python-dotenv
 streamlit
 upstash-vector
+requests
