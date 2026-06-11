@@ -59,8 +59,6 @@ db = init_services()
 # =========================================================================
 with st.sidebar:
     st.header("📂 Tambah Buku Sejarah")
-    
-    # PERBAIKAN: Menerima file PDF dan TXT sekaligus
     uploaded_file = st.file_uploader("Unggah file Buku Sejarah Baru", type=["pdf", "txt"])
     
     if uploaded_file is not None:
@@ -69,33 +67,31 @@ with st.sidebar:
             nama_file = os.path.basename(uploaded_file.name)
             
             # -----------------------------------------------------------------
-            # ✨ KUNCI UTAMA: PENOLAKAN INSTAN DI DETIK PERTAMA
+            # ✨ LAPIS 1: PENOLAKAN INSTAN BERBASIS SQL STRING FILTER
             # -----------------------------------------------------------------
-            with st.spinner("🔍 Memeriksa database cloud..."):
+            with st.spinner("🔍 Memeriksa apakah file sudah ada di cloud..."):
                 try:
-                    # Lakukan pencarian metadata berdasarkan nama file di Upstash
-                    filter_metadata = {"source": nama_file}
+                    # KUNCI UTAMA: LangChain Upstash mewajibkan filter ditulis dalam format String SQL
+                    string_filter_sql = f"source = '{nama_file}'"
+                    
                     dokumen_kembar = db.similarity_search(
-                        query="sejarah", # Kata kunci pemicu pencarian biasa
+                        query="sejarah", 
                         k=1, 
-                        filter=filter_metadata
+                        filter=string_filter_sql  # Menggunakan format string SQL yang valid
                     )
                     
-                    # JIKA DITEMUKAN: Tolak langsung dan hentikan program!
-                    if dokumen_kembar:
+                    if dokumen_kembar and len(dokumen_kembar) > 0:
                         st.warning(f"❌ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah sebelumnya.")
-                        st.stop() # Menghentikan proses Streamlit seketika
+                        st.stop()  # Blokir total, hentikan eksekusi Streamlit di detik ini!
                         
                 except Exception as e:
-                    # Jika database masih benar-benar kosong dari awal, abaikan error filter ini
                     pass
             # -----------------------------------------------------------------
 
-            # JIKA LOLOS FILTER, MULAI BACA ISI FILE SECARA OTOMATIS
+            # JIKA SENSOR LOLOS, BACA ISI FILE
             with st.spinner("Python sedang membaca isi dokumen..."):
                 teks_seluruh_buku = ""
                 
-                # Cek Ekstrak File berdasarkan tipe ekensinya
                 if nama_file.endswith('.pdf'):
                     from pypdf import PdfReader
                     reader = PdfReader(uploaded_file)
@@ -105,22 +101,21 @@ with st.sidebar:
                             teks_seluruh_buku += teks_halaman + "\n"
                             
                 elif nama_file.endswith('.txt'):
-                    # Membaca file teks biasa menggunakan Python standar
                     teks_seluruh_buku = uploaded_file.read().decode("utf-8")
 
-                # Proses Penyaringan Kata Kunci Sampah
+                # Penapisan Kata Kunci Sampah (Menggunakan standar baris teks)
                 kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
                 lines = teks_seluruh_buku.split("\n")
-                lines_bersih = []
+                lines_clean = []
                 
                 for line in lines:
                     line_lowercased = line.lower().strip()
                     if len(line_lowercased) < 15: continue
                     if any(kata in line_lowercased for kata in kata_kunci_sampah): continue
                     if line_lowercased.isdigit(): continue
-                    lines_bersih.append(line)
+                    lines_clean.append(line)
                     
-                teks_bersih_final = "\n".join(lines_bersih)
+                teks_bersih_final = "\n".join(lines_clean)
 
                 # PROSES CHUNKING MURNI PYTHON (Konsep Slide Window)
                 chunk_size = 1000
@@ -135,6 +130,7 @@ with st.sidebar:
                 st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
 
                 if list_teks:
+                    # ✨ LAPIS 2: Sinkronisasi rumus ID unik untuk overwrite otomatis jika nama file diubah
                     list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
                     list_metadatas = [{"source": nama_file} for _ in list_teks]
                     
@@ -146,6 +142,7 @@ with st.sidebar:
                                 ids=list_ids
                             )
                             st.success(f"✅ Berhasil! Buku '{nama_file}' kini aman tersimpan di Upstash Cloud!")
+                            st.rerun() # Refresh halaman Streamlit agar status upload bersih kembali
                         except Exception as e:
                             st.error(f"❌ Gagal mengunggah: {e}")
                 else:
