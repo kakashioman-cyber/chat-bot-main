@@ -80,28 +80,42 @@ with st.sidebar:
         if st.button("🚀 Proses & Unggah ke Cloud"):
             import os
             nama_file = os.path.basename(uploaded_file.name)
+            
+            # ✨ Penanda status: buat False di awal
             file_sudah_ada = False 
             
             with st.spinner("🔍 Memeriksa apakah file sudah ada di cloud..."):
                 try:
                     string_filter_sql = f"source = '{nama_file}'"
-                    dokumen_kembar = db.similarity_search(query="sejarah", k=1, filter=string_filter_sql)
+                    dokumen_kembar = db.similarity_search(
+                        query="sejarah", 
+                        k=1, 
+                        filter=string_filter_sql
+                    )
+                    
                     if dokumen_kembar and len(dokumen_kembar) > 0:
                         st.warning(f"❌ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah sebelumnya.")
+                        # ✨ PERBAIKAN UTAMA: Ubah status menjadi True, JANGAN pakai st.stop()
                         file_sudah_ada = True  
-                except Exception:
+                        
+                except Exception as e:
                     pass
 
-            # JIKA BELUM PERNAH DIUNGGAH, JALANKAN PROSESNYA
+            # -----------------------------------------------------------------
+            # JIKA BELUM ADA (LOLOS SENSOR), BARU JALANKAN PROSES EKSTRAKSI
+            # -----------------------------------------------------------------
             if not file_sudah_ada:
                 with st.spinner("Python sedang membaca isi dokumen..."):
                     teks_seluruh_buku = ""
+                    
                     if nama_file.endswith('.pdf'):
                         from pypdf import PdfReader
                         reader = PdfReader(uploaded_file)
                         for halaman in reader.pages:
                             teks_halaman = halaman.extract_text()
-                            if teks_halaman: teks_seluruh_buku += teks_halaman + "\n"
+                            if teks_halaman:
+                                teks_seluruh_buku += teks_halaman + "\n"
+                                
                     elif nama_file.endswith('.txt'):
                         teks_seluruh_buku = uploaded_file.read().decode("utf-8")
 
@@ -109,6 +123,7 @@ with st.sidebar:
                     kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
                     lines = teks_seluruh_buku.split("\n")
                     lines_clean = []
+                    
                     for line in lines:
                         line_lowercased = line.lower().strip()
                         if len(line_lowercased) < 15: continue
@@ -131,31 +146,16 @@ with st.sidebar:
                     st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
 
                     if list_teks:
+                        list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
+                        list_metadatas = [{"source": nama_file} for _ in list_teks]
+                        
                         with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
                             try:
-                                # 1. Dapatkan vektor 384 dimensi dari API Serverless secara langsung
-                                vektor_hasil_huggingface = mesin_embedding.embed_documents(list_teks)
-                                
-                                # 2. Hubungkan ke Klien Native Upstash (Bypass LangChain)
-                                upstash_url = st.secrets.get("UPSTASH_VECTOR_REST_URL") or os.getenv("UPSTASH_VECTOR_REST_URL")
-                                upstash_token = st.secrets.get("UPSTASH_VECTOR_REST_TOKEN") or os.getenv("UPSTASH_VECTOR_REST_TOKEN")
-                                upstash_client = UpstashNativeIndex(url=upstash_url, token=upstash_token)
-                                
-                                # 3. Susun data dalam format Tuple resmi Upstash
-                                vektor_siap_kirim = []
-                                for i, teks_chunk in enumerate(list_teks):
-                                    chunk_id = generate_unique_id(teks_chunk, nama_file)
-                                    metadata_gabungan = {"source": nama_file, "text": teks_chunk}
-                                    
-                                    vektor_siap_kirim.append((
-                                        chunk_id,
-                                        vektor_hasil_huggingface[i],
-                                        metadata_gabungan
-                                    ))
-                                
-                                # 4. Tembak langsung ke server Upstash Cloud (100% Sah & Sukses)
-                                upstash_client.upsert(vectors=vektor_siap_kirim)
-                                
+                                db.add_texts(
+                                    texts=list_teks,
+                                    metadatas=list_metadatas,
+                                    ids=list_ids
+                               )
                                 st.success(f"✅ Berhasil! Buku '{nama_file}' kini aman tersimpan di Upstash Cloud!")
                                 st.rerun()
                             except Exception as e:
