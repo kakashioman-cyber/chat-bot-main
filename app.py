@@ -66,87 +66,87 @@ with st.sidebar:
             import os
             nama_file = os.path.basename(uploaded_file.name)
             
-            # -----------------------------------------------------------------
-            # ✨ LAPIS 1: PENOLAKAN INSTAN BERBASIS SQL STRING FILTER
-            # -----------------------------------------------------------------
+            # ✨ Penanda status: buat False di awal
+            file_sudah_ada = False 
+            
             with st.spinner("🔍 Memeriksa apakah file sudah ada di cloud..."):
                 try:
-                    # KUNCI UTAMA: LangChain Upstash mewajibkan filter ditulis dalam format String SQL
                     string_filter_sql = f"source = '{nama_file}'"
-                    
                     dokumen_kembar = db.similarity_search(
                         query="sejarah", 
                         k=1, 
-                        filter=string_filter_sql  # Menggunakan format string SQL yang valid
+                        filter=string_filter_sql
                     )
                     
                     if dokumen_kembar and len(dokumen_kembar) > 0:
                         st.warning(f"❌ Berkas ditolak! Buku Sejarah dengan nama '{nama_file}' sudah pernah diunggah sebelumnya.")
-                        st.stop()  # Blokir total, hentikan eksekusi Streamlit di detik ini!
+                        # ✨ PERBAIKAN UTAMA: Ubah status menjadi True, JANGAN pakai st.stop()
+                        file_sudah_ada = True  
                         
                 except Exception as e:
                     pass
+
             # -----------------------------------------------------------------
-
-            # JIKA SENSOR LOLOS, BACA ISI FILE
-            with st.spinner("Python sedang membaca isi dokumen..."):
-                teks_seluruh_buku = ""
-                
-                if nama_file.endswith('.pdf'):
-                    from pypdf import PdfReader
-                    reader = PdfReader(uploaded_file)
-                    for halaman in reader.pages:
-                        teks_halaman = halaman.extract_text()
-                        if teks_halaman:
-                            teks_seluruh_buku += teks_halaman + "\n"
-                            
-                elif nama_file.endswith('.txt'):
-                    teks_seluruh_buku = uploaded_file.read().decode("utf-8")
-
-                # Penapisan Kata Kunci Sampah (Menggunakan standar baris teks)
-                kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
-                lines = teks_seluruh_buku.split("\n")
-                lines_clean = []
-                
-                for line in lines:
-                    line_lowercased = line.lower().strip()
-                    if len(line_lowercased) < 15: continue
-                    if any(kata in line_lowercased for kata in kata_kunci_sampah): continue
-                    if line_lowercased.isdigit(): continue
-                    lines_clean.append(line)
+            # JIKA BELUM ADA (LOLOS SENSOR), BARU JALANKAN PROSES EKSTRAKSI
+            # -----------------------------------------------------------------
+            if not file_sudah_ada:
+                with st.spinner("Python sedang membaca isi dokumen..."):
+                    teks_seluruh_buku = ""
                     
-                teks_bersih_final = "\n".join(lines_clean)
+                    if nama_file.endswith('.pdf'):
+                        from pypdf import PdfReader
+                        reader = PdfReader(uploaded_file)
+                        for halaman in reader.pages:
+                            teks_halaman = halaman.extract_text()
+                            if teks_halaman:
+                                teks_seluruh_buku += teks_halaman + "\n"
+                                
+                    elif nama_file.endswith('.txt'):
+                        teks_seluruh_buku = uploaded_file.read().decode("utf-8")
 
-                # PROSES CHUNKING MURNI PYTHON (Konsep Slide Window)
-                chunk_size = 1000
-                chunk_overlap = 200
-                list_teks = []
-                start = 0
-                while start < len(teks_bersih_final):
-                    end = start + chunk_size
-                    list_teks.append(teks_bersih_final[start:end])
-                    start += (chunk_size - chunk_overlap)
-
-                st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
-
-                if list_teks:
-                    # ✨ LAPIS 2: Sinkronisasi rumus ID unik untuk overwrite otomatis jika nama file diubah
-                    list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
-                    list_metadatas = [{"source": nama_file} for _ in list_teks]
+                    # Penapisan Kata Kunci Sampah
+                    kata_kunci_sampah = ["daftar gambar", "daftar tabel", "kata pengantar", "prakata", "glosarium", "indeks"]
+                    lines = teks_seluruh_buku.split("\n")
+                    lines_clean = []
                     
-                    with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
-                        try:
-                            db.add_texts(
-                                texts=list_teks,
-                                metadatas=list_metadatas,
-                                ids=list_ids
-                            )
-                            st.success(f"✅ Berhasil! Buku '{nama_file}' kini aman tersimpan di Upstash Cloud!")
-                            st.rerun() # Refresh halaman Streamlit agar status upload bersih kembali
-                        except Exception as e:
-                            st.error(f"❌ Gagal mengunggah: {e}")
-                else:
-                    st.warning("⚠️ File tidak berisi teks sejarah yang lolos sensor filter Python.")
+                    for line in lines:
+                        line_lowercased = line.lower().strip()
+                        if len(line_lowercased) < 15: continue
+                        if any(kata in line_lowercased for kata in kata_kunci_sampah): continue
+                        if line_lowercased.isdigit(): continue
+                        lines_clean.append(line)
+                        
+                    teks_bersih_final = "\n".join(lines_clean)
+
+                    # PROSES CHUNKING MURNI PYTHON
+                    chunk_size = 1000
+                    chunk_overlap = 200
+                    list_teks = []
+                    start = 0
+                    while start < len(teks_bersih_final):
+                        end = start + chunk_size
+                        list_teks.append(teks_bersih_final[start:end])
+                        start += (chunk_size - chunk_overlap)
+
+                    st.info(f"🧹 Python Selesai: Dokumen dipotong menjadi {len(list_teks)} bagian bersih.")
+
+                    if list_teks:
+                        list_ids = [generate_unique_id(text, nama_file) for text in list_teks]
+                        list_metadatas = [{"source": nama_file} for _ in list_teks]
+                        
+                        with st.spinner("Hugging Face sedang membuat vektor & mengirim ke Upstash..."):
+                            try:
+                                db.add_texts(
+                                    texts=list_teks,
+                                    metadatas=list_metadatas,
+                                    ids=list_ids
+                               )
+                                st.success(f"✅ Berhasil! Buku '{nama_file}' kini aman tersimpan di Upstash Cloud!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Gagal mengunggah: {e}")
+                    else:
+                        st.warning("⚠️ File tidak berisi teks sejarah yang lolos sensor filter Python.")
 
 # 3. Kelola Riwayat Obrolan
 if "messages" not in st.session_state:
