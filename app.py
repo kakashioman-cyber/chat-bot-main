@@ -56,54 +56,35 @@ db = init_services()
 # ✨ FUNGSI PEMANGGIL AI CADANGAN (FALLBACK GENERATORS)
 # =========================================================================
 def panggil_gemini(prompt):
-    # Model utama yang Anda gunakan
     model = genai.GenerativeModel('gemini-2.5-flash')
     response = model.generate_content(prompt)
     return response.text, "🧠 Gemini 2.5 Flash"
 
-def panggil_gemini_cadangan(prompt):
-    # CADANGAN 1: Jika model utama habis kuota, gunakan model eksperimental Gemini terbaru
-    # Kuota menitnya terpisah dari gemini-2.5-flash sehingga sangat aman untuk cadangan gratis
-    model = genai.GenerativeModel('gemini-2.5-pro')
-    response = model.generate_content(prompt)
-    return response.text, "🚀 Gemini 2.5 Pro (Cadangan)"
-
-def panggil_huggingface(prompt):
-    key = st.secrets.get("HUGGINGFACEHUB_API_TOKEN") or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+def panggil_groq(prompt):
+    # ✨ MEMANGGIL API GROQ (LPU) YANG SUPER CEPAT DAN GRATIS
+    key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
     if not key:
-        raise ValueError("Token Hugging Face tidak dikonfigurasi")
+        raise ValueError("Key Groq (pake Q) tidak dikonfigurasi")
         
-    # Endpoint Llama-3.1-8B-Instruct resmi gratis kilat dari Hugging Face
-    url = "https://huggingface.co"
+    url = "https://groq.com"
     headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}"
     }
-    
-    # ✨ PERBAIKAN MUTLAK: Bungkus prompt ke format chat template Llama-3.1 agar diterima server
-    prompt_terstruktur = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-    
     payload = {
-        "inputs": prompt_terstruktur,
-        "parameters": {
-            "max_new_tokens": 512, 
-            "return_full_text": False,
-            "temperature": 0.7
-        }
+        "model": "llama-3.3-70b-versatile", # Model gratis terbaik dan paling pintar di Groq saat ini
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7
     }
-    
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
-    result = response.json()
-    
-    # ✨ Ekstrak teks secara presisi berdasarkan format keluaran Hugging Face
-    if isinstance(result, list) and len(result) > 0:
-        teks_balasan = result[0].get("generated_text", "")
-        return teks_balasan, "🤗 Hugging Face (Llama-3.1)"
-    elif isinstance(result, dict) and "generated_text" in result:
-        return result["generated_text"], "🤗 Hugging Face (Llama-3.1)"
-        
-    raise ValueError("Format respon Hugging Face tidak dikenal")
+    return response.json()["choices"][0]["message"]["content"], "⚡ Groq LPU (Llama-3.3)"
+
+def panggil_gemini_cadangan(prompt):
+    # Benteng pertahanan terakhir jika Google Flash dan Groq sama-sama limit
+    model = genai.GenerativeModel('gemini-2.5-pro')
+    response = model.generate_content(prompt)
+    return response.text, "🚀 Gemini 2.5 Pro (Cadangan Akhir)"
 # =========================================================================
 
 # =========================================================================
@@ -230,35 +211,35 @@ if user_query := st.chat_input("Ketik pertanyaan Anda di sini..."):
 
         with st.spinner("✍️ AI Sedang berpikir..."):
             # -----------------------------------------------------------------
-            # ✨ JALUR PENYELAMAT INDEPENDEN (ANTI-SANGKUT GEMINI)
+            # ✨ JALUR PENYELAMAT INDEPENDEN (GEMINI FLASH -> GROQ -> GEMINI PRO)
             # -----------------------------------------------------------------
-            jalur_gemini_sukses = False
+            jalur_sukses = False
 
-            # Langkah A: Coba jalankan Gemini Utama
+            # Langkah A: Coba jalankan Gemini Flash Utama
             try:
                 bot_response, model_digunakan = panggil_gemini(prompt)
-                jalur_gemini_sukses = True # Tandai sukses jika lolos
+                jalur_sukses = True
             except Exception:
-                jalur_gemini_sukses = False
+                jalur_sukses = False
 
-            # Langkah B: Coba jalankan Gemini Cadangan jika yang utama gagal
-            if not jalur_gemini_sukses:
+            # Langkah B: Jika Gemini Flash limit, LANGSUNG lempar ke Groq API yang kilat dan gratis
+            if not jalur_sukses:
+                try:
+                    bot_response, model_digunakan = panggil_groq(prompt)
+                    jalur_sukses = True
+                except Exception:
+                    jalur_sukses = False
+
+            # Langkah C: Jika Groq juga limit, gunakan benteng terakhir Gemini 2.5 Pro
+            if not jalur_sukses:
                 try:
                     bot_response, model_digunakan = panggil_gemini_cadangan(prompt)
-                    jalur_gemini_sukses = True
-                except Exception:
-                    jalur_gemini_sukses = False
-
-            # Langkah C: Jika kedua otak Gemini mogok, LANGSUNG tembak Hugging Face secara independen
-            if not jalur_gemini_sukses:
-                try:
-                    bot_response, model_digunakan = panggil_huggingface(prompt)
-                except Exception as e_hf:
-                    st.error(f"❌ Seluruh layanan AI sedang penuh! Pesan error akhir: {e_hf}")
+                except Exception as e_final:
+                    st.error(f"❌ Seluruh layanan AI (Gemini Flash, Groq, Gemini Pro) sedang penuh! Eror: {e_final}")
                     st.stop()
             # -----------------------------------------------------------------
 
-        # Tampilkan jawaban bersih di layar
+        # Tampilkan jawaban bersih di layar browser
         st.markdown(bot_response)
         st.caption(f"🤖 Dibalas oleh: {model_digunakan}")
         st.session_state.messages.append({"role": "assistant", "content": bot_response})
