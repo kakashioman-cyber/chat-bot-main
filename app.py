@@ -61,24 +61,34 @@ def panggil_gemini(prompt):
     return response.text, "🧠 Gemini 2.5 Flash"
 
 def panggil_groq(prompt):
+    # Mengambil kunci OpenRouter yang kita simpan di variabel GROQ_API_KEY
     key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
     if not key:
-        raise ValueError("Key Groq (pake Q) tidak dikonfigurasi")
+        raise ValueError("Kunci API OpenRouter belum dikonfigurasi!")
         
-    url = "https://groq.com"
+    # URL Endpoint resmi OpenRouter
+    url = "https://openrouter.ai"
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {key}"
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
     }
     payload = {
-        # ✨ MODEL AKTIF RESMI: Llama 3.1 8B Instant adalah raja free tier Groq saat ini
-        "model": "llama-3.1-8b-instant", 
+        # ✨ MODEL 100% GRATIS SELAMANYA: Llama 3 8B Instruct versi Free dari OpenRouter
+        "model": "meta-llama/llama-3-8b-instruct:free", 
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
+    
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
-    return response.json()["choices"]["message"]["content"], "⚡ Groq LPU (Llama-3.1 8B)"
+    result = response.json()
+    
+    # Ekstrak hasil jawaban teks dari format standar OpenRouter
+    try:
+        teks_balasan = result["choices"][0]["message"]["content"]
+        return teks_balasan, "⚡ OpenRouter (Llama-3 8B Free)"
+    except Exception:
+        raise ValueError(f"Gagal membaca respon OpenRouter. Data: {result}")
 
 def panggil_gemini_cadangan(prompt):
     # Benteng pertahanan terakhir jika Google Flash dan Groq sama-sama limit
