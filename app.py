@@ -71,14 +71,14 @@ def panggil_groq(prompt):
         "Authorization": f"Bearer {key}"
     }
     payload = {
-        # ✨ PERBAIKAN UTAMA: Ganti ke model Llama-3 (8B) yang 100% GRATIS tanpa ribet billing
-        "model": "llama3-8b-8192", 
+        # ✨ PERBAIKAN AKURAT: Gunakan gemma2-9b-it yang dijamin 100% bebas biaya di Free Tier Groq
+        "model": "gemma2-9b-it", 
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
-    return response.json()["choices"]["message"]["content"], "⚡ Groq LPU (Llama-3 8B)"
+    return response.json()["choices"]["message"]["content"], "⚡ Groq LPU (Gemma-2 9B)"
 
 def panggil_gemini_cadangan(prompt):
     # Benteng pertahanan terakhir jika Google Flash dan Groq sama-sama limit
