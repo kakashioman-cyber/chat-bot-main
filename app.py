@@ -61,7 +61,6 @@ def panggil_gemini(prompt):
     return response.text, "🧠 Gemini 2.5 Flash"
 
 def panggil_groq(prompt):
-    # ✨ MEMANGGIL API GROQ (LPU) YANG SUPER CEPAT DAN GRATIS
     key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
     if not key:
         raise ValueError("Key Groq (pake Q) tidak dikonfigurasi")
@@ -72,13 +71,14 @@ def panggil_groq(prompt):
         "Authorization": f"Bearer {key}"
     }
     payload = {
-        "model": "llama-3.3-70b-versatile", # Model gratis terbaik dan paling pintar di Groq saat ini
+        # ✨ PERBAIKAN UTAMA: Ganti ke model Llama-3 (8B) yang 100% GRATIS tanpa ribet billing
+        "model": "llama3-8b-8192", 
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
     response = requests.post(url, json=payload, headers=headers)
     response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"], "⚡ Groq LPU (Llama-3.3)"
+    return response.json()["choices"]["message"]["content"], "⚡ Groq LPU (Llama-3 8B)"
 
 def panggil_gemini_cadangan(prompt):
     # Benteng pertahanan terakhir jika Google Flash dan Groq sama-sama limit
